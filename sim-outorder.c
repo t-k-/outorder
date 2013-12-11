@@ -1,6 +1,6 @@
 #define TK
 //#define ORG
-#define DUMP
+//#define DUMP
 static void ruu_compare(void);
 
 #if 0
@@ -2219,7 +2219,7 @@ ruu_commit(void)
 	  LSQ_num--;
 	}
 
-      if (pred
+      if (pred && !rs->red
 	  && bpred_spec_update == spec_CT
 	  && (MD_OP_FLAGS(rs->op) & F_CTRL))
 	{
@@ -2236,6 +2236,7 @@ ruu_commit(void)
 	}
 
       /* invalidate RUU operation instance */
+
       RUU[RUU_head].tag++;
       sim_slip += (sim_cycle - RUU[RUU_head].slip);
       /* print retirement trace if in verbose mode */
@@ -2367,7 +2368,12 @@ ruu_recover(int branch_index)			/* index of mis-pred branch */
 	}
       
       /* squash this RUU entry */
-      RUU[RUU_index].tag++;
+      RUU[RUU_index].tag+=3;
+////////////////////////////////////////////////////////////////////////////
+//      fprintf(tk_file, "squash....");
+//      ruu_dumpent(&RUU[RUU_index], 0, tk_file, /* header */TRUE);
+//      fprintf(tk_file, "\n");
+////////////////////////////////////////////////////////////////////////////
 
       /* indicate in pipetrace that this instruction was squashed */
       ptrace_endinst(RUU[RUU_index].ptrace_seq);
@@ -2442,7 +2448,7 @@ ruu_writeback(void)
 	} 
 
       /* if we speculatively update branch-predictor, do it here */
-      if (pred
+      if (pred && rs->red
 	  && bpred_spec_update == spec_WB
 	  && !rs->in_LSQ
 	  && (MD_OP_FLAGS(rs->op) & F_CTRL))
@@ -2477,8 +2483,11 @@ ruu_writeback(void)
 			  {
 				  if (RSLINK_VALID(olink))
 				  {
-					  if (olink->rs->idep_ready[olink->x.opnum])
+					  if (olink->rs->idep_ready[olink->x.opnum]) {
+						  fprintf(tk_file, "aaaaaaaaaaaaaaaa\n");
+		  				  ruu_dumpent(olink->rs, 0, tk_file, /* header */TRUE);
 						  panic("output dependence already satisfied");
+					  }
 
 					  /* input is now ready */
 					  olink->rs->idep_ready[olink->x.opnum] = TRUE;
@@ -2633,10 +2642,13 @@ ruu_issue(void)
 	{
 	  struct RUU_station *rs = RSLINK_RS(node);
 
+
 	  /* issue operation, both reg and mem deps have been satisfied */
 	  if (!OPERANDS_READY(rs) || !rs->queued
-	      || rs->issued || rs->completed)
-	    panic("issued inst !ready, issued, or completed");
+			  || rs->issued || rs->completed) {
+		  fprintf(stderr, "error: %d %d %d %d\n", !OPERANDS_READY(rs), !rs->queued, rs->issued, rs->completed);
+		  panic("issued inst !ready, issued, or completed");
+	  }
 
 	  /* node is now un-queued */
 	  rs->queued = FALSE;
@@ -3298,7 +3310,6 @@ ruu_link_idep(struct RUU_station *rs,		/* rs station to link */
 	  rs->idep_ready[idep_num] = TRUE;
 	  return;
    }
-  /* else, creator operation will make this value sometime in the future */
 
   /* indicate value will be created sometime in the future, i.e., operand
      is not yet ready for use */
@@ -3307,23 +3318,12 @@ ruu_link_idep(struct RUU_station *rs,		/* rs station to link */
   /* link onto creator's output list of dependant operand */
   RSLINK_NEW(link, rs); link->x.opnum = idep_num;
 
-//fprintf(tk_file, "install: odepnum=%d\n",head.odep_num);
-//ruu_dumpent(rs, rs - RUU, tk_file, /* header */TRUE);
-//fprintf(tk_file, "\n");
   if (head.rs->in_LSQ || head.rs->red == rs->red) {
 	  link->next = head.rs->odep_list[head.odep_num];
 	  head.rs->odep_list[head.odep_num] = link;
-//fprintf(tk_file, "on \n");
-//ruu_dumpent(head.rs, head.rs - RUU, tk_file, /* header */TRUE);
-//fprintf(tk_file, "\n------\n");
-//fflush(tk_file);
   } else {
 	  link->next = head.rs->pair->odep_list[head.odep_num];
 	  head.rs->pair->odep_list[head.odep_num] = link;
-//fprintf(tk_file, "on \n");
-//ruu_dumpent(head.rs->pair, head.rs->pair - RUU, tk_file, /* header */TRUE);
-//fprintf(tk_file, "\n------\n");
-//fflush(tk_file);
   }
 }
 
@@ -3955,7 +3955,9 @@ ruu_dispatch(void)
 	  RUU_num++;
 	  
 	  rs_red = &RUU[RUU_tail];
+	  unsigned int save_tag = rs_red->tag;
 	  *rs_red = *rs;
+	  rs_red->tag = save_tag;
 		
 	  /* make the redundant one identical */
 	  rs_red->red = 1; 
@@ -4051,7 +4053,7 @@ ruu_dispatch(void)
 			  readyq_enqueue(rs_red);
 #endif
 	      /* issue may continue when the load/store is issued */
-	      RSLINK_INIT(last_op, lsq);
+	      //RSLINK_INIT(last_op, lsq);
 
 	      /* issue stores only, loads are issued by lsq_refresh() */
 	      if (((MD_OP_FLAGS(op) & (F_MEM|F_STORE)) == (F_MEM|F_STORE))
@@ -4100,7 +4102,7 @@ ruu_dispatch(void)
 	      else
 		{
 		  /* could not issue this inst, stall issue until we can */
-		  RSLINK_INIT(last_op, rs);
+		  //RSLINK_INIT(last_op, rs);
 		}
 #ifndef ORG
 		  ///////////////////////////
@@ -4119,8 +4121,8 @@ ruu_dispatch(void)
 	  rs_red = NULL;
 	}
 
-      /* one more instruction executed, speculative or otherwise */
-      sim_total_insn++;
+      sim_total_insn+= 2;
+
       if (MD_OP_FLAGS(op) & F_CTRL)
 	sim_total_branches++;
 
@@ -4649,16 +4651,16 @@ sim_main(void)
 	  /* issue operations ready to execute from a previous cycle */
 	  /* <== drains ready queue <-- ready operations commence execution */
 	  ruu_issue();
-#ifdef DUMP
-	  tk_dump(tk_file, "ruu_issue");
-#endif
 	}
 
-	 ruu_compare();
+	 //ruu_compare();
 
       /* decode and dispatch new operations */
       /* ==> insert ops w/ no deps or all regs ready --> reg deps resolved */
       ruu_dispatch();
+#ifdef DUMP
+	  tk_dump(tk_file, "ruu_dispatch");
+#endif
 
       if (bugcompat_mode)
 	{
@@ -4714,9 +4716,7 @@ ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
 		fprintf(stream, "$");
 
 	fprintf(stream, "\t");
-	fprintf(stream, " <%lu>: ", rs->id);
-//	fprintf(stream, "%2d: ",
-//			index);
+	fprintf(stream, " <%lu,%d,%p>: ", rs->id, rs->tag, rs);
 	md_print_insn(rs->IR, rs->PC, stream);
 
 	fprintf(stream, "\tTo:");
@@ -4729,9 +4729,10 @@ ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
 			for (olink=rs->odep_list[i]; olink; olink=olink_next)
 			{
 				if (RSLINK_VALID(olink))
-					fprintf(stream, "<%lu>", olink->rs->id);
-				else
-					fprintf(stream, "<!!%lu!!>", olink->rs->id);
+					fprintf(stream, "<%lu,%p>", olink->rs->id, olink->rs);
+				else 
+					fprintf(stream, "<!%lu,%p>", olink->rs->id, olink->rs);
+
 				olink_next = olink->next;
 			}
 		} /* if not NA output */
