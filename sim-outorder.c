@@ -2484,128 +2484,50 @@ ruu_writeback(void)
       ptrace_newstage(rs->ptrace_seq, PST_WRITEBACK,
 		      rs->recover_inst ? PEV_MPDETECT : 0);
 
-//	  cv_print();
-//	fprintf(tk_file, "instr<%lu> (red=%d) retiring... \n", rs->id, rs->red);
-      /* broadcast results to consuming operations, this is more efficiently
-         accomplished by walking the output dependency chains of the
-	 completed instruction */
-      for (i=0; i<MAX_ODEPS; i++)
-	{
-	  if (rs->onames[i] != NA)
-	    {
-	      struct CV_link link;
-	      struct RS_link *olink, *olink_next;
-  	
-		  //fprintf(tk_file, "instr<%lu> (red=%d) retired on [%d]", rs->id, rs->red, rs->onames[i]);
+	  rs_cv_reset(rs);
+	  for (i=0; i<MAX_ODEPS; i++)
+	  {
+		  if (rs->onames[i] != NA)
+		  {
+			  struct CV_link link;
+			  struct RS_link *olink, *olink_next;
 
-	      if (rs->spec_mode)
-		{
-		//	fprintf(tk_file, " spec mode.\n");
-		  /* update the speculative create vector, future operations
-		     get value from later creator or architected reg file */
-		  link = spec_create_vector[rs->onames[i]];
-#ifdef TK
-		  if (rs->red) {
-			  if (link.rs__red && (link.rs__red == rs && link.odep_num__red == i))
+			  for (olink=rs->odep_list[i]; olink; olink=olink_next)
 			  {
-				  spec_create_vector[rs->onames[i]].rs__red = NULL;
-				  spec_create_vector[rs->onames[i]].odep_num__red = 0;
+				  if (RSLINK_VALID(olink))
+				  {
+					  if (olink->rs->idep_ready[olink->x.opnum])
+						  panic("output dependence already satisfied");
+
+					  /* input is now ready */
+					  olink->rs->idep_ready[olink->x.opnum] = TRUE;
+
+					  /* are all the register operands of target ready? */
+					  if (OPERANDS_READY(olink->rs))
+					  {
+						  /* yes! enqueue instruction as ready, NOTE: stores
+							 complete at dispatch, so no need to enqueue
+							 them */
+						  if (!olink->rs->in_LSQ
+								  || ((MD_OP_FLAGS(olink->rs->op)&(F_MEM|F_STORE))
+									  == (F_MEM|F_STORE)))
+							  readyq_enqueue(olink->rs);
+						  /* else, ld op, issued when no mem conflict */
+					  }
+				  }
+
+				  /* grab link to next element prior to free */
+				  olink_next = olink->next;
+
+				  /* free dependence link element */
+				  RSLINK_FREE(olink);
 			  }
-		  } else {
-			  if (link.rs && (link.rs == rs && link.odep_num == i))
-			  {
-				  spec_create_vector[rs->onames[i]].rs = NULL;
-				  spec_create_vector[rs->onames[i]].odep_num = 0;
-			  }
-		  }
-#else
-		  if (/* !NULL */link.rs
-		      && /* refs RS */(link.rs == rs && link.odep_num == i))
-		    {
-		      /* the result can now be read from a physical register,
-			 indicate this as so */
-		      spec_create_vector[rs->onames[i]] = CVLINK_NULL;
-		    }
-#endif
+			  /* blow away the consuming op list */
+			  rs->odep_list[i] = NULL;
 
-		  /* else, creator invalidated or there is another creator */
-		}
-	      else
-		{
-	//		fprintf(tk_file, " normal mode.\n");
-		  /* update the non-speculative create vector, future
-		     operations get value from later creator or architected
-		     reg file */
-		  link = create_vector[rs->onames[i]];
-
-#ifdef TK
-		  if (rs->red) {
-			  if (link.rs__red && link.rs__red == rs && link.odep_num__red == i)
-			  {
-				  create_vector[rs->onames[i]].rs__red = NULL;
-				  create_vector[rs->onames[i]].odep_num__red = 0;
-			  }
-		  } else {
-			  if (link.rs && link.rs == rs && link.odep_num == i)
-			  {
-				  create_vector[rs->onames[i]].rs = NULL;
-				  create_vector[rs->onames[i]].odep_num = 0;
-			  }
-		  }
-#else
-		  if (/* !NULL */link.rs
-		      && /* refs RS */(link.rs == rs && link.odep_num == i))
-		    {
-		      /* the result can now be read from a physical register,
-			 indicate this as so */
-		      create_vector[rs->onames[i]] = CVLINK_NULL;
-		    }
-#endif
-		  /* else, creator invalidated or there is another creator */
-		}
-
-	      /* walk output list, queue up ready operations */
-	      for (olink=rs->odep_list[i]; olink; olink=olink_next)
-		{
-		  if (RSLINK_VALID(olink))
-		    {
-		      if (olink->rs->idep_ready[olink->x.opnum])
-			panic("output dependence already satisfied");
-
-		      /* input is now ready */
-		      olink->rs->idep_ready[olink->x.opnum] = TRUE;
-
-		      /* are all the register operands of target ready? */
-		      if (OPERANDS_READY(olink->rs))
-			{
-			  /* yes! enqueue instruction as ready, NOTE: stores
-			     complete at dispatch, so no need to enqueue
-			     them */
-			  if (!olink->rs->in_LSQ
-			      || ((MD_OP_FLAGS(olink->rs->op)&(F_MEM|F_STORE))
-				  == (F_MEM|F_STORE)))
-			    readyq_enqueue(olink->rs);
-			  /* else, ld op, issued when no mem conflict */
-			}
-		    }
-
-		  /* grab link to next element prior to free */
-		  olink_next = olink->next;
-
-		  /* free dependence link element */
-		  RSLINK_FREE(olink);
-		}
-	      /* blow away the consuming op list */
-	      rs->odep_list[i] = NULL;
-
-	    } /* if not NA output */
-
-	} /* for all outputs */
-	  
-	  //cv_print();
-
-   } /* for all writeback events */
-
+		  } /* if not NA output */
+	  } /* for all outputs */
+	} /* for all writeback events */
 }
 
 
