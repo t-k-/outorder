@@ -1,9 +1,9 @@
 #define TK
 //#define ORG
-//#define DUMP
+#define DUMP
 static void ruu_compare(void);
 
-#if 1
+#if 0
 #define MY_DBG \
   fprintf(tk_file, "line %d\n", __LINE__); \
   fflush(tk_file);
@@ -2028,13 +2028,11 @@ readyq_enqueue(struct RUU_station *rs)		/* RS to enqueue */
 /* an entry in the create vector */
 struct CV_link {
   struct RUU_station *rs;               /* creator's reservation station */
-  struct RUU_station *rs__red;               /* creator's reservation station */
   int odep_num;                         /* specific output operand */
-  int odep_num__red;                         /* specific output operand */
 };
 
 /* a NULL create vector entry */
-static struct CV_link CVLINK_NULL = { NULL, NULL, 0, 0}; //__red
+static struct CV_link CVLINK_NULL = { NULL, 0};
 
 /* get a new create vector link */
 #define CVLINK_INIT(CV, RS,ONUM)	((CV).rs = (RS), (CV).odep_num = (ONUM))
@@ -2278,6 +2276,7 @@ ruu_commit(void)
 static void
 rs_cv_reset(struct RUU_station *rs)
 {
+MY_DBG;
 	int i;
 	struct CV_link link;
 
@@ -2288,35 +2287,13 @@ rs_cv_reset(struct RUU_station *rs)
 			if (rs->spec_mode) {
 				link = spec_create_vector[rs->onames[i]];
 
-				if (rs->red) {
-					if (link.rs__red && (link.rs__red == rs && link.odep_num__red == i))
-					{
-						spec_create_vector[rs->onames[i]].rs__red = NULL;
-						spec_create_vector[rs->onames[i]].odep_num__red = 0;
-					}
-				} else {
-					if (link.rs && (link.rs == rs && link.odep_num == i))
-					{
-						spec_create_vector[rs->onames[i]].rs = NULL;
-						spec_create_vector[rs->onames[i]].odep_num = 0;
-					}
-				}
+				spec_create_vector[rs->onames[i]].rs = NULL;
+				spec_create_vector[rs->onames[i]].odep_num = 0;
 			} else {
 				link = create_vector[rs->onames[i]];
 
-				if (rs->red) {
-					if (link.rs__red && link.rs__red == rs && link.odep_num__red == i)
-					{
-						create_vector[rs->onames[i]].rs__red = NULL;
-						create_vector[rs->onames[i]].odep_num__red = 0;
-					}
-				} else {
-					if (link.rs && link.rs == rs && link.odep_num == i)
-					{
-						create_vector[rs->onames[i]].rs = NULL;
-						create_vector[rs->onames[i]].odep_num = 0;
-					}
-				}
+				create_vector[rs->onames[i]].rs = NULL;
+				create_vector[rs->onames[i]].odep_num = 0;
 			}
 		}
 	}
@@ -2356,6 +2333,7 @@ ruu_recover(int branch_index)			/* index of mis-pred branch */
 	    panic("RUU and LSQ out of sync");
 
 	  rs_cv_reset(&LSQ[LSQ_index]);
+	  MY_DBG;
 
 	  /* recover any resources consumed by the load or store operation */
 	  for (i=0; i<MAX_ODEPS; i++)
@@ -2378,6 +2356,7 @@ ruu_recover(int branch_index)			/* index of mis-pred branch */
 	}
 
 	  rs_cv_reset(&RUU[RUU_index]);
+	  MY_DBG;
 
       /* recover any resources used by this RUU operation */
       for (i=0; i<MAX_ODEPS; i++)
@@ -2485,6 +2464,8 @@ ruu_writeback(void)
 		      rs->recover_inst ? PEV_MPDETECT : 0);
 
 	  rs_cv_reset(rs);
+	  MY_DBG;
+
 	  for (i=0; i<MAX_ODEPS; i++)
 	  {
 		  if (rs->onames[i] != NA)
@@ -3313,21 +3294,10 @@ ruu_link_idep(struct RUU_station *rs,		/* rs station to link */
   /* locate creator of operand */
   head = CREATE_VECTOR(idep_name);
 
-#ifdef TK
-  if (rs->red && !head.rs__red) {
-	  rs->idep_ready[idep_num] = TRUE;
-	  return;
-  }
-  if (!rs->red && !head.rs) {
-	  rs->idep_ready[idep_num] = TRUE;
-	  return;
-  }
-#else
   if (!head.rs) {
 	  rs->idep_ready[idep_num] = TRUE;
 	  return;
    }
-#endif
   /* else, creator operation will make this value sometime in the future */
 
   /* indicate value will be created sometime in the future, i.e., operand
@@ -3337,18 +3307,24 @@ ruu_link_idep(struct RUU_station *rs,		/* rs station to link */
   /* link onto creator's output list of dependant operand */
   RSLINK_NEW(link, rs); link->x.opnum = idep_num;
 
-#ifdef TK
-  if (rs->red) {
-	  link->next = head.rs__red->odep_list[head.odep_num__red];
-	  head.rs__red->odep_list[head.odep_num__red] = link;
+//fprintf(tk_file, "install: odepnum=%d\n",head.odep_num);
+//ruu_dumpent(rs, rs - RUU, tk_file, /* header */TRUE);
+//fprintf(tk_file, "\n");
+  if (head.rs->in_LSQ || head.rs->red == rs->red) {
+	  link->next = head.rs->odep_list[head.odep_num];
+	  head.rs->odep_list[head.odep_num] = link;
+//fprintf(tk_file, "on \n");
+//ruu_dumpent(head.rs, head.rs - RUU, tk_file, /* header */TRUE);
+//fprintf(tk_file, "\n------\n");
+//fflush(tk_file);
   } else {
-	  link->next = head.rs->odep_list[head.odep_num];
-	  head.rs->odep_list[head.odep_num] = link;
+	  link->next = head.rs->pair->odep_list[head.odep_num];
+	  head.rs->pair->odep_list[head.odep_num] = link;
+//fprintf(tk_file, "on \n");
+//ruu_dumpent(head.rs->pair, head.rs->pair - RUU, tk_file, /* header */TRUE);
+//fprintf(tk_file, "\n------\n");
+//fflush(tk_file);
   }
-#else
-	  link->next = head.rs->odep_list[head.odep_num];
-	  head.rs->odep_list[head.odep_num] = link;
-#endif
 }
 
 /* make RS the creator of architected register ODEP_NAME */
@@ -3373,6 +3349,9 @@ ruu_install_odep(struct RUU_station *rs,	/* creating RUU station */
 
   /* initialize output chain to empty list */
   rs->odep_list[odep_num] = NULL;
+
+  if (!rs->red)
+	  return;
   
   struct CV_link *cctv;
   if (spec_mode)
@@ -3382,23 +3361,8 @@ ruu_install_odep(struct RUU_station *rs,	/* creating RUU station */
   } else
 	  cctv = &(create_vector[odep_name]);
 
-#ifdef TK
-	  //cv_print();
-  if (rs->red) {
-  	//fprintf(tk_file, "red=%d <%lu> installed on red[%d]\n", rs->red, rs->id, odep_name);
-	  cctv->rs__red = rs;
-	  cctv->odep_num__red = odep_num;
-  } else {
-  	//fprintf(tk_file, "red=%d <%lu> installed on white[%d]\n", rs->red, rs->id, odep_name);
-	  cctv->rs = rs;
-	  cctv->odep_num = odep_num;
-  }
-	 //cv_print();
-#else
   cctv->rs = rs;
   cctv->odep_num = odep_num;
-#endif
-// SET_CREATE_VECTOR(odep_name, cv);
 }
 
 
@@ -4690,7 +4654,7 @@ sim_main(void)
 #endif
 	}
 
-	  ruu_compare();
+	 ruu_compare();
 
       /* decode and dispatch new operations */
       /* ==> insert ops w/ no deps or all regs ready --> reg deps resolved */
@@ -4723,6 +4687,8 @@ sim_main(void)
 
       /* go to next cycle */
       sim_cycle++;
+//	  if (sim_cycle > 40)
+//		  panic("ssss");
 
       /* finish early? */
       if (max_insts && sim_num_insn >= max_insts)
@@ -4747,10 +4713,11 @@ ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
 	if (OPERANDS_READY(rs))
 		fprintf(stream, "$");
 
-	fprintf(stream, "%2d: ",
-			index, MD_OP_NAME(rs->op));
+	fprintf(stream, "\t");
+	fprintf(stream, " <%lu>: ", rs->id);
+//	fprintf(stream, "%2d: ",
+//			index);
 	md_print_insn(rs->IR, rs->PC, stream);
-	fprintf(stream, " <%lu> ", rs->id);
 
 	fprintf(stream, "\tTo:");
 	for (i=0; i<MAX_ODEPS; i++)
@@ -4761,8 +4728,10 @@ ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
 
 			for (olink=rs->odep_list[i]; olink; olink=olink_next)
 			{
-				if (olink->rs->tag != 0 && RSLINK_VALID(olink))
+				if (RSLINK_VALID(olink))
 					fprintf(stream, "<%lu>", olink->rs->id);
+				else
+					fprintf(stream, "<!!%lu!!>", olink->rs->id);
 				olink_next = olink->next;
 			}
 		} /* if not NA output */
@@ -4836,12 +4805,8 @@ cv_print()
   {
 	  if (create_vector[i].rs)
 		  fprintf(tk_file, "r%d: rs=<%lu> \n",i, create_vector[i].rs->id);
-	  if (create_vector[i].rs__red)
-		  fprintf(tk_file, "r%d: rs__red=<%lu> \n",i, create_vector[i].rs__red->id);
 	  if (spec_create_vector[i].rs)
 		  fprintf(tk_file, "r%d(spec): rs=<%lu> \n",i, spec_create_vector[i].rs->id);
-	  if (spec_create_vector[i].rs__red)
-		  fprintf(tk_file, "r%d(spec): rs__red=<%lu> \n",i, spec_create_vector[i].rs__red->id);
     }
 
   fprintf(tk_file, "\n");
