@@ -2646,7 +2646,8 @@ ruu_issue(void)
 	  /* issue operation, both reg and mem deps have been satisfied */
 	  if (!OPERANDS_READY(rs) || !rs->queued
 			  || rs->issued || rs->completed) {
-		  fprintf(stderr, "error: %d %d %d %d\n", !OPERANDS_READY(rs), !rs->queued, rs->issued, rs->completed);
+		  fprintf(tk_file, "error: %d %d %d %d\n", !OPERANDS_READY(rs), !rs->queued, rs->issued, rs->completed);
+		  ruu_dumpent(rs, rs - RUU, tk_file, /* header */TRUE);
 		  panic("issued inst !ready, issued, or completed");
 	  }
 
@@ -4653,7 +4654,7 @@ sim_main(void)
 	  ruu_issue();
 	}
 
-	 //ruu_compare();
+	 ruu_compare();
 
       /* decode and dispatch new operations */
       /* ==> insert ops w/ no deps or all regs ready --> reg deps resolved */
@@ -4698,6 +4699,45 @@ sim_main(void)
     }
 }
 
+int if_pair_out(struct RUU_station *rs)
+{
+//	int i = RUU_head;
+//	int j = RUU_num;
+//	struct RUU_station *lo_rs;
+//	while (j > 0) {
+//		lo_rs = &(RUU[i]);
+//		if (rs->pair == lo_rs) {
+//			aaa = 0;
+//			break;
+//		}
+//		i = (i + 1) % RUU_size;
+//		j--;
+//	}
+//	if (j == 0)
+//		aaa = 1;
+
+	unsigned int npair = (unsigned int)(rs->pair - RUU);
+	unsigned int last = (RUU_head + RUU_num - 1) % RUU_size;
+	if (last < RUU_head) {
+		if (last < npair && npair < RUU_head)
+			return 1;
+		else 
+			return 0;
+	} else {
+		if (RUU_head <= npair && npair <= last)
+			return 0;
+		else 
+			return 1;
+	}
+
+//	if (aaa != bbb) {
+//		fprintf(tk_file, "aaaaaaaaaaaaaaaaaa!\n");
+//		fprintf(tk_file, "head=%d num=%d size=%d npair=%d last=%d \n", RUU_head,
+//				RUU_num, RUU_size, npair, last);
+//		fprintf(tk_file, "a=%d b=%d \n", aaa, bbb);
+//	}
+}
+
 /* dump the contents of the RUU */
 static void
 ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
@@ -4716,8 +4756,11 @@ ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
 		fprintf(stream, "$");
 
 	fprintf(stream, "\t");
-	fprintf(stream, " <%lu,%d,%p>: ", rs->id, rs->tag, rs);
+	fprintf(stream, " <%lu>: ", rs->id);
 	md_print_insn(rs->IR, rs->PC, stream);
+
+	if (if_pair_out(rs))
+		fprintf(stream, " (pair out)");
 
 	fprintf(stream, "\tTo:");
 	for (i=0; i<MAX_ODEPS; i++)
@@ -4729,7 +4772,7 @@ ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
 			for (olink=rs->odep_list[i]; olink; olink=olink_next)
 			{
 				if (RSLINK_VALID(olink))
-					fprintf(stream, "<%lu,%p>", olink->rs->id, olink->rs);
+					fprintf(stream, "<%lu>", olink->rs->id);
 				else 
 					fprintf(stream, "<!%lu,%p>", olink->rs->id, olink->rs);
 
@@ -4744,9 +4787,9 @@ ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
 	if (rs->completed)
 		fprintf(stream, "]");
 	if (rs->comparing == 1)
-		fprintf(stream, "(comparing)", rs->comparing);
+		fprintf(stream, "(comparing1 with <%lu>)", rs->pair->id);
 	else if (rs->comparing > 1)
-		fprintf(stream, "(compared)", rs->comparing);
+		fprintf(stream, "(compared%d with <%lu>)", rs->comparing, rs->pair->id);
 }
 
 void
@@ -4820,34 +4863,41 @@ ruu_compare(void)
 	int j = RUU_num;
 	struct res_template *fu;
 	struct RUU_station *rs;
+	
+	while (j > 0) {
+		rs = &(RUU[i]);
+		if (rs->completed && !rs->comparing) {
+				rs->comparing = 1;
+				rs->completed = 0;
+		}
 
+		if (if_pair_out(rs)) {
+			rs->completed = 1;
+			rs->comparing = 4;
+		}
+
+		i = (i + 1) % RUU_size;
+		j--;
+	}
+
+	i = RUU_head;
+	j = RUU_num;
 	while (j > 0) {
 		rs = &(RUU[i]);
 
 		if (rs->recover_inst)
 			break;
 
-		if (rs->completed) {
-			if (!rs->comparing) {
-				rs->comparing = 1;
-				rs->completed = 0;
+		if (rs->completed && rs->comparing == 3) {
+			rs->pair->completed = 1;
 
-			} else if (rs->comparing == 3) {
-				rs->pair->completed = 1;
-				
-				if (0) {
-					ruu_recover(rs - RUU);
-					bpred_recover(pred, rs->PC, rs->stack_recover_idx);
-				}
+			if (0) {
+				ruu_recover(rs - RUU);
+				bpred_recover(pred, rs->PC, rs->stack_recover_idx);
 			}
 		}
 
-		if (rs->comparing == 1 && (rs->pair->completed || rs->pair->comparing)) {
-			if (rs->pair->completed) {
-				rs->pair->comparing = 1;
-				rs->pair->completed = 0;
-			}
-
+		if (rs->comparing == 1 && rs->pair->comparing) {
 			fu = res_get(fu_pool, COMP_UNIT);
 
 			if (fu) {
