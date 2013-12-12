@@ -3,7 +3,7 @@ options="-seed 1 -nice 0 -max:inst 0 -fastfwd 0 -fetch:ifqsize 4 -fetch:mplat 3 
 
 make 2>&1 | grep error && exit
 
-find ./tests/bin.little/ -name "test-*" -print0 | while read -d $'\0' i
+find ./tests/bin.little/ -name "test-*" | while read -d $'\n' i
 do
 	a=`pwd`
 	sh -c "$a/origin-outorder $options $a/$i"

@@ -1,7 +1,19 @@
-#define TK
-//#define ORG
 //#define DUMP
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <assert.h>
+#include <signal.h>
+
+FILE *tk_file;
+
 static void ruu_compare(void);
+static void ruu_dump(FILE *stream);				/* output stream */
+static void tk_dump(FILE *stream, const char * say);
+void cv_print();
+
+#define COMP_UNIT NUM_FU_CLASSES
 
 #if 0
 #define MY_DBG \
@@ -10,8 +22,6 @@ static void ruu_compare(void);
 #else
 #define MY_DBG
 #endif
-
-#define COMP_UNIT NUM_FU_CLASSES
 
 /* sim-outorder.c - sample out-of-order issue perf simulator implementation */
 
@@ -63,13 +73,6 @@ static void ruu_compare(void);
  * Copyright (C) 1994-2003 by Todd M. Austin, Ph.D. and SimpleScalar, LLC.
  */
 
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <assert.h>
-#include <signal.h>
-FILE *tk_file;
 
 #include "host.h"
 #include "misc.h"
@@ -267,6 +270,7 @@ static int bugcompat_mode;
 
 /* resource pool definition, NOTE: update FU_*_INDEX defs if you change this */
 struct res_desc fu_config[] = {
+  /////////////////////////////////////
   {
     "compare unit",
     4,
@@ -275,6 +279,7 @@ struct res_desc fu_config[] = {
       { COMP_UNIT, 1, 1 }
     }
   },
+  /////////////////////////////////////
   {
     "integer-ALU",
     4,
@@ -1551,10 +1556,12 @@ struct RUU_station {
      enforcing memory dependencies) */
   int idep_ready[MAX_IDEPS];		/* input operand ready? */
 
+  /////////////////////////////////////
   int                 red;
-  unsigned int        id;
+  unsigned int        id;/* debug purpose */
   struct RUU_station *pair;
   int                 comparing;
+  /////////////////////////////////////
 };
 
 /* non-zero if all register operands are ready, update with MAX_IDEPS */
@@ -1580,25 +1587,6 @@ ruu_init(void)
   RUU_count = 0;
   RUU_fcount = 0;
 }
-
-static void
-ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
-	    int index,				/* entry index */
-	    FILE *stream,			/* output stream */
-	    int header);				/* print header? */
-
-/* dump the contents of the RUU */
-//static
-//int max(int a, int b)
-//{
-//	if (a > b)
-//		return a;
-//	else
-//		return b;
-//}
-
-static void
-ruu_dump(FILE *stream);				/* output stream */
 
 /*
  * load/store queue (LSQ): holds loads and stores in program order, indicating
@@ -2079,20 +2067,6 @@ cv_init(void)
   BITMAP_CLEAR_MAP(use_spec_cv, CV_BMAP_SZ);
 }
 
-//static void
-//cv_reset(int branch_index)
-//{
-//  int i;
-////  for (i=0; i < MD_TOTAL_REGS; i++)
-////    {
-////      spec_create_vector[i] = CVLINK_NULL;
-////    }
-//  BITMAP_CLEAR_MAP(use_spec_cv, CV_BMAP_SZ);
-//}
-
-void 
-cv_print();
-
 /* dump the contents of the create vector */
 static void
 cv_dump(FILE *stream)				/* output stream */
@@ -2277,25 +2251,29 @@ ruu_commit(void)
 static void
 rs_cv_reset(struct RUU_station *rs)
 {
-MY_DBG;
-	int i;
-	struct CV_link link;
+	int i, oname;
+	struct CV_link *link;
 
 	for (i=0; i<MAX_ODEPS; i++)
 	{
-		if (rs->onames[i] != NA)
+		oname = rs->onames[i];
+		if (oname != NA)
 		{
-			if (rs->spec_mode) {
-				link = spec_create_vector[rs->onames[i]];
+			rs->onames[i] = NA;
 
-				spec_create_vector[rs->onames[i]].rs = NULL;
-				spec_create_vector[rs->onames[i]].odep_num = 0;
-			} else {
-				link = create_vector[rs->onames[i]];
+			if (rs->spec_mode)
+				link = &spec_create_vector[oname];
+			else
+				link = &create_vector[oname];
 
-				create_vector[rs->onames[i]].rs = NULL;
-				create_vector[rs->onames[i]].odep_num = 0;
-			}
+			if (link->rs == rs) {
+				if (rs->pair->onames[i] == oname) {
+					link->rs = rs->pair;
+				} else {
+					link->rs = NULL;
+					link->odep_num = 0;
+				}
+			} 
 		}
 	}
 }
@@ -2333,8 +2311,9 @@ ruu_recover(int branch_index)			/* index of mis-pred branch */
 	  if (!LSQ_num)
 	    panic("RUU and LSQ out of sync");
 
+	  //////////////////////////////////
 	  rs_cv_reset(&LSQ[LSQ_index]);
-	  MY_DBG;
+	  //////////////////////////////////
 
 	  /* recover any resources consumed by the load or store operation */
 	  for (i=0; i<MAX_ODEPS; i++)
@@ -2356,8 +2335,9 @@ ruu_recover(int branch_index)			/* index of mis-pred branch */
 	  LSQ_num--;
 	}
 
+	  //////////////////////////////////
 	  rs_cv_reset(&RUU[RUU_index]);
-	  MY_DBG;
+	  //////////////////////////////////
 
       /* recover any resources used by this RUU operation */
       for (i=0; i<MAX_ODEPS; i++)
@@ -2368,12 +2348,7 @@ ruu_recover(int branch_index)			/* index of mis-pred branch */
 	}
       
       /* squash this RUU entry */
-      RUU[RUU_index].tag+=3;
-////////////////////////////////////////////////////////////////////////////
-//      fprintf(tk_file, "squash....");
-//      ruu_dumpent(&RUU[RUU_index], 0, tk_file, /* header */TRUE);
-//      fprintf(tk_file, "\n");
-////////////////////////////////////////////////////////////////////////////
+      RUU[RUU_index].tag+=1;
 
       /* indicate in pipetrace that this instruction was squashed */
       ptrace_endinst(RUU[RUU_index].ptrace_seq);
@@ -2433,14 +2408,9 @@ ruu_writeback(void)
 		if (rs->in_LSQ)
 			panic("mis-predicted load or store?!?!?");
 
-//		  fprintf(tk_file, "before reset...total_regs=%d, branch_index=%d\n",MD_TOTAL_REGS,rs-RUU);
-//		  cv_print();
-		  ruu_recover(rs - RUU);
-//		  fprintf(tk_file, "after reset...\n");
-//		  cv_print();
+		ruu_recover(rs - RUU);
 
 		  tracer_recover();
-		  //cv_reset(rs-RUU);
 		  bpred_recover(pred, rs->PC, rs->stack_recover_idx);
 
 		  /* stall fetch until I-fetch and I-decode recover */
@@ -2448,7 +2418,7 @@ ruu_writeback(void)
 	} 
 
       /* if we speculatively update branch-predictor, do it here */
-      if (pred && rs->red
+      if (pred && !rs->red
 	  && bpred_spec_update == spec_WB
 	  && !rs->in_LSQ
 	  && (MD_OP_FLAGS(rs->op) & F_CTRL))
@@ -2469,12 +2439,16 @@ ruu_writeback(void)
       ptrace_newstage(rs->ptrace_seq, PST_WRITEBACK,
 		      rs->recover_inst ? PEV_MPDETECT : 0);
 
+	  ////////////////////
 	  rs_cv_reset(rs);
-	  MY_DBG;
+	  ///////////////////
 
 	  for (i=0; i<MAX_ODEPS; i++)
 	  {
-		  if (rs->onames[i] != NA)
+		  /////////////////////////////
+//		  if (rs->onames[i] != NA)
+//		  /////////////////////////////
+		  if (rs->odep_list[i] != NULL)
 		  {
 			  struct CV_link link;
 			  struct RS_link *olink, *olink_next;
@@ -3309,23 +3283,21 @@ ruu_link_idep(struct RUU_station *rs,		/* rs station to link */
 
   if (!head.rs) {
 	  rs->idep_ready[idep_num] = TRUE;
-	  return;
-   }
+  } else if (head.rs->in_LSQ || head.rs->red == rs->red) {
+	  rs->idep_ready[idep_num] = FALSE;
+	  RSLINK_NEW(link, rs); link->x.opnum = idep_num;
 
-  /* indicate value will be created sometime in the future, i.e., operand
-     is not yet ready for use */
-  rs->idep_ready[idep_num] = FALSE;
-
-  /* link onto creator's output list of dependant operand */
-  RSLINK_NEW(link, rs); link->x.opnum = idep_num;
-
-  if (head.rs->in_LSQ || head.rs->red == rs->red) {
 	  link->next = head.rs->odep_list[head.odep_num];
 	  head.rs->odep_list[head.odep_num] = link;
-  } else {
+
+  } else if (head.rs->pair->onames[head.odep_num] == idep_name) {
+	  rs->idep_ready[idep_num] = FALSE;
+	  RSLINK_NEW(link, rs); link->x.opnum = idep_num;
+
 	  link->next = head.rs->pair->odep_list[head.odep_num];
 	  head.rs->pair->odep_list[head.odep_num] = link;
-  }
+  } else
+	  rs->idep_ready[idep_num] = TRUE;
 }
 
 /* make RS the creator of architected register ODEP_NAME */
@@ -3738,7 +3710,8 @@ ruu_dispatch(void)
   qword_t temp_qword = 0;		/* " ditto " */
 #endif /* HOST_HAS_QWORD */
   enum md_fault_type fault;
-	  struct RUU_station *rs_red;	
+
+  struct RUU_station *rs_red;	
 
   made_check = FALSE;
   n_dispatched = 0;
@@ -3951,7 +3924,6 @@ ruu_dispatch(void)
 	  rs->red = 0; 
 	  rs->id = (tk_id++);
 	  rs->comparing = 0;
-#ifndef ORG
 	  RUU_tail = (RUU_tail + 1) % RUU_size;
 	  RUU_num++;
 	  
@@ -3967,7 +3939,7 @@ ruu_dispatch(void)
 	  rs_red->pair = rs;
 
 	  rs_red->id = (tk_id++);
-#endif
+	  /////////////////////////////////////
 
 	  /* split ld/st's into two operations: eff addr comp + mem access */
 	  if (MD_OP_FLAGS(op) & F_MEM)
@@ -3978,8 +3950,10 @@ ruu_dispatch(void)
 
 	      /* fill in LSQ reservation station */
 	      lsq = &LSQ[LSQ_tail];
+		  /////////////////////////////////////////////
 		  lsq->red = 0;
 		  lsq->id = (tk_id++);
+		  ////////////////////////////////////////////
               lsq->slip = sim_cycle - 1;
 	      lsq->IR = inst;
 	      lsq->op = op;
@@ -4011,7 +3985,6 @@ ruu_dispatch(void)
 	      ruu_install_odep(rs, /* odep_list[] index */0, DTMP);
 	      ruu_install_odep(rs, /* odep_list[] index */1, NA);
 
-#ifndef ORG
 		  //////////////////////////////
 		  ruu_link_idep(rs_red, /* idep_ready[] index */0, NA); // ld.  r1  #21(r5)
 	      ruu_link_idep(rs_red, /* idep_ready[] index */1, in2);
@@ -4019,7 +3992,6 @@ ruu_dispatch(void)
 	      ruu_install_odep(rs_red, /* odep_list[] index */0, DTMP);
 	      ruu_install_odep(rs_red, /* odep_list[] index */1, NA);
 		  /////////////////////////////
-#endif
 
 	      /* link memory access onto output chain of eff addr operation */
 	      ruu_link_idep(lsq,
@@ -4049,10 +4021,11 @@ ruu_dispatch(void)
 		  readyq_enqueue(rs);
 		}
 
-#ifndef ORG
+		  ////////////////////////////
 		  if (OPERANDS_READY(rs_red))
 			  readyq_enqueue(rs_red);
-#endif
+		  /////////////////////////////
+		  
 	      /* issue may continue when the load/store is issued */
 	      //RSLINK_INIT(last_op, lsq);
 
@@ -4076,7 +4049,6 @@ ruu_dispatch(void)
 	      ruu_install_odep(rs, /* odep_list[] index */0, out1);
 	      ruu_install_odep(rs, /* odep_list[] index */1, out2);
 
-#ifndef ORG
 		  ////////////////////////////////////
 	      ruu_link_idep(rs_red, /* idep_ready[] index */0, in1);
 	      ruu_link_idep(rs_red, /* idep_ready[] index */1, in2);
@@ -4085,7 +4057,6 @@ ruu_dispatch(void)
 	      ruu_install_odep(rs_red, /* odep_list[] index*/0, out1);
 	      ruu_install_odep(rs_red, /*odep_list[] index*/1, out2);
 		  ////////////////////////////////////
-#endif
 	      /* install operation in the RUU */
 	      n_dispatched++;
 	      RUU_tail = (RUU_tail + 1) % RUU_size;
@@ -4105,14 +4076,12 @@ ruu_dispatch(void)
 		  /* could not issue this inst, stall issue until we can */
 		  //RSLINK_INIT(last_op, rs);
 		}
-#ifndef ORG
 		  ///////////////////////////
 		  if (OPERANDS_READY(rs_red))
 		  {
 			  readyq_enqueue(rs_red);
 		  }
 		  /////////////////////////////
-#endif
 	    }
 	}
       else
@@ -4160,9 +4129,7 @@ ruu_dispatch(void)
 	      /* entering mis-speculation mode, indicate this and save PC */
 	      spec_mode = TRUE;
 	      rs->recover_inst = TRUE;
-#ifndef ORG
 	      rs_red->recover_inst = FALSE;
-#endif
 	      recover_PC = regs.regs_NPC;
 	    }
 	}
@@ -4690,8 +4657,6 @@ sim_main(void)
 
       /* go to next cycle */
       sim_cycle++;
-//	  if (sim_cycle > 40)
-//		  panic("ssss");
 
       /* finish early? */
       if (max_insts && sim_num_insn >= max_insts)
@@ -4701,21 +4666,6 @@ sim_main(void)
 
 int if_pair_out(struct RUU_station *rs)
 {
-//	int i = RUU_head;
-//	int j = RUU_num;
-//	struct RUU_station *lo_rs;
-//	while (j > 0) {
-//		lo_rs = &(RUU[i]);
-//		if (rs->pair == lo_rs) {
-//			aaa = 0;
-//			break;
-//		}
-//		i = (i + 1) % RUU_size;
-//		j--;
-//	}
-//	if (j == 0)
-//		aaa = 1;
-
 	unsigned int npair = (unsigned int)(rs->pair - RUU);
 	unsigned int last = (RUU_head + RUU_num - 1) % RUU_size;
 	if (last < RUU_head) {
@@ -4729,17 +4679,10 @@ int if_pair_out(struct RUU_station *rs)
 		else 
 			return 1;
 	}
-
-//	if (aaa != bbb) {
-//		fprintf(tk_file, "aaaaaaaaaaaaaaaaaa!\n");
-//		fprintf(tk_file, "head=%d num=%d size=%d npair=%d last=%d \n", RUU_head,
-//				RUU_num, RUU_size, npair, last);
-//		fprintf(tk_file, "a=%d b=%d \n", aaa, bbb);
-//	}
 }
 
 /* dump the contents of the RUU */
-static void
+void
 ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
 	    int index,				/* entry index */
 	    FILE *stream,			/* output stream */
@@ -4792,7 +4735,7 @@ ruu_dumpent(struct RUU_station *rs,		/* ptr to RUU station */
 		fprintf(stream, "(compared%d with <%lu>)", rs->comparing, rs->pair->id);
 }
 
-void
+static void
 tk_dump(FILE *stream, const char * say)				/* output stream */
 {
   int num_ruu, num_lsq, head_ruu, head_lsq;
